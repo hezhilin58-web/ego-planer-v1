@@ -1,0 +1,4 @@
+<launch>
+  <include file="$(find ego_planner)/launch/run_in_sim.launch"/>
+  <include file="$(find ego_planner)/launch/rviz.launch"/>
+</launch>

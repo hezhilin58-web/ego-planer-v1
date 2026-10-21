@@ -1,0 +1,10 @@
+# Local fixes for stale Boost paths in the existing Noetic installation.
+set(cpp_common_DIR "${CMAKE_CURRENT_LIST_DIR}/noetic-cmake/cpp_common" CACHE PATH "Local Noetic config" FORCE)
+set(rospack_DIR "${CMAKE_CURRENT_LIST_DIR}/noetic-cmake/rospack" CACHE PATH "Local Noetic config" FORCE)
+set(bondcpp_DIR "${CMAKE_CURRENT_LIST_DIR}/noetic-cmake/bondcpp" CACHE PATH "Local Noetic config" FORCE)
+set(class_loader_DIR "${CMAKE_CURRENT_LIST_DIR}/noetic-cmake/class_loader" CACHE PATH "Local Noetic config" FORCE)
+set(roscpp_DIR "${CMAKE_CURRENT_LIST_DIR}/noetic-cmake/roscpp" CACHE PATH "Local Noetic config" FORCE)
+set(rosconsole_DIR "${CMAKE_CURRENT_LIST_DIR}/noetic-cmake/rosconsole" CACHE PATH "Local Noetic config" FORCE)
+set(rostime_DIR "${CMAKE_CURRENT_LIST_DIR}/noetic-cmake/rostime" CACHE PATH "Local Noetic config" FORCE)
+set(rviz_DIR "${CMAKE_CURRENT_LIST_DIR}/noetic-cmake/rviz" CACHE PATH "Local Noetic config" FORCE)
+set(laser_geometry_DIR "${CMAKE_CURRENT_LIST_DIR}/noetic-cmake/laser_geometry" CACHE PATH "Local Noetic config" FORCE)

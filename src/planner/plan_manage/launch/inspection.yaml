@@ -1,0 +1,19 @@
+# Stations are independent goals. The last station intentionally repeats the first.
+# Heading defaults face the map centre; angles are in degrees.
+stations:
+  - {position: [-15.0, 0.0, 1.0], yaw_deg: 0.0}
+  - {position: [0.0, 15.0, 1.0], yaw_deg: -90.0}
+  - {position: [15.0, 0.0, 1.0], yaw_deg: 180.0}
+  - {position: [0.0, -15.0, 1.0], yaw_deg: 90.0}
+  - {position: [-15.0, 0.0, 1.0], yaw_deg: 0.0}
+auto_start: true
+position_tolerance: 0.2
+speed_tolerance: 0.1
+yaw_tolerance_deg: 5.0
+yaw_rate_tolerance_deg: 5.0
+stable_time: 1.0
+hover_time: 3.0
+station_hold_time: 1.0
+leg_timeout: 120.0
+station_timeout: 45.0
+odom_timeout: 0.5
