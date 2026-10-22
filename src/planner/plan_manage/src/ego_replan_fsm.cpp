@@ -1,5 +1,9 @@
 // fsm: Finite State Machine, 即有限状态机
 #include <plan_manage/ego_replan_fsm.h>
+#include <cmath>
+#include <iomanip>
+#include <sstream>
+#include <std_msgs/String.h>
 
 namespace ego_planner
 {
@@ -12,6 +16,7 @@ namespace ego_planner
     have_odom_ = false;
 
     /*  fsm param  */
+    nh.param("fsm/use_waypoint_height", use_waypoint_height_, false);
     nh.param("fsm/flight_type", target_type_, -1);  // 飞行类型，即目标是 预先指定(2) 或者 手动给定(1)
     // value="1.5"  也就是说无人机每间隔1.5m规划一次
     nh.param("fsm/thresh_replan", replan_thresh_, -1.0);
@@ -60,6 +65,7 @@ namespace ego_planner
 
     bspline_pub_ = nh.advertise<ego_planner::Bspline>("/planning/bspline", 10);
     data_disp_pub_ = nh.advertise<ego_planner::DataDisp>("/planning/data_display", 100);
+    planning_metrics_pub_ = nh.advertise<std_msgs::String>("/inspection/planning_metrics", 1000, true);
 
     if (target_type_ == TARGET_TYPE::MANUAL_TARGET)   // 根据实时订阅到的目标点生成全局轨迹
       waypoint_sub_ = nh.subscribe("/waypoint_generator/waypoints", 1, &EGOReplanFSM::waypointCallback, this);
@@ -132,19 +138,31 @@ namespace ego_planner
   /* 根据实时获取的目标点生成全局轨迹 */
   void EGOReplanFSM::waypointCallback(const nav_msgs::PathConstPtr &msg)
   {
-    if (msg->poses[0].pose.position.z < -0.1) // 目标点有误
+    if (msg->poses.empty())
+      return;
+    const auto &point = msg->poses[0].pose.position;
+    if (!std::isfinite(point.x) || !std::isfinite(point.y) ||
+        !std::isfinite(point.z) || point.z < -0.1)
       return;
 
     cout << "Triggered!" << endl;
+    goal_received_at_ = std::chrono::steady_clock::now();
+    ++goal_seq_;
+    waiting_first_trajectory_ = true;
     trigger_ = true;
     init_pt_ = odom_pos_;   // 初始位置，未使用
 
     bool success = false;
     end_pt_ << msg->poses[0].pose.position.x,   // 将订阅到的位置作为 目标位置
                msg->poses[0].pose.position.y, 
-               1.0;
+               (use_waypoint_height_ ? point.z : 1.0);
     // 尝试根据 当前所订阅到的目标位置 以及 机器人当前（初始）状态 作全局轨迹规划
     success = planner_manager_->planGlobalTraj(odom_pos_, odom_vel_, Eigen::Vector3d::Zero(), end_pt_, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero());
+    const double global_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - goal_received_at_).count();
+    publishPlanningMetric("global", success, global_ms);
+    if (!success)
+      waiting_first_trajectory_ = false;
 
     visualization_->displayGoalPoint(end_pt_, Eigen::Vector4d(0, 0.5, 0.5, 1), 0.3, 0);
 
@@ -505,6 +523,8 @@ namespace ego_planner
 
   // 其主要作用是调用轨迹规划器进行重规划,并发布和可视化生成的B样条曲线轨迹。
   bool EGOReplanFSM::callReboundReplan(bool flag_use_poly_init, bool flag_randomPolyTraj) {
+    const auto attempt_started = std::chrono::steady_clock::now();
+    const bool initial_response = waiting_first_trajectory_;
     getLocalTarget();   // 获取局部目标点。
 
     // 调用planner_manager_->reboundReplan()函数进行轨迹重规划。
@@ -515,6 +535,9 @@ namespace ego_planner
                                         local_target_pt_, local_target_vel_, 
                                         (have_new_target_ || flag_use_poly_init), flag_randomPolyTraj);
     have_new_target_ = false;   // 重置 标志 为false
+    auto attempt_finished = std::chrono::steady_clock::now();
+    double goal_response_ms = -1.0;
+    int published_trajectory = -1;
 
     cout << "final_plan_success=" << plan_success << endl;
 
@@ -551,10 +574,44 @@ namespace ego_planner
       // 发布B样条信息,包括 样条阶数、开始时间、轨迹编号、控制点和节点向量
       bspline_pub_.publish(bspline);
 
+      attempt_finished = std::chrono::steady_clock::now();
+      published_trajectory = info->traj_id_;
+      if (waiting_first_trajectory_)
+      {
+        goal_response_ms = std::chrono::duration<double, std::milli>(
+            attempt_finished - goal_received_at_).count();
+        waiting_first_trajectory_ = false;
+      }
+
       visualization_->displayOptimalList(info->position_traj_.get_control_points(), 0);
     }
 
+    const double duration_ms = std::chrono::duration<double, std::milli>(
+        attempt_finished - attempt_started).count();
+    publishPlanningMetric(initial_response ? "local_initial" : "local_replan", plan_success,
+                          duration_ms, goal_response_ms, published_trajectory);
     return plan_success;
+  }
+
+  void EGOReplanFSM::publishPlanningMetric(const std::string &stage, bool success,
+                                          double duration_ms, double goal_response_ms,
+                                          int trajectory_id)
+  {
+    std::ostringstream json;
+    json << std::fixed << std::setprecision(9)
+         << "{\"seq\":" << ++planning_seq_ << ",\"goal_id\":" << goal_seq_
+         << ",\"time\":" << ros::Time::now().toSec() << ",\"stage\":\"" << stage
+         << "\",\"success\":" << (success ? "true" : "false")
+         << ",\"duration_ms\":" << duration_ms << ",\"goal_response_ms\":";
+    if (goal_response_ms >= 0.0) json << goal_response_ms;
+    else json << "null";
+    json << ",\"trajectory_id\":";
+    if (trajectory_id >= 0) json << trajectory_id;
+    else json << "null";
+    json << "}";
+    std_msgs::String msg;
+    msg.data = json.str();
+    planning_metrics_pub_.publish(msg);
   }
 
   /* 在紧急情况下停止无人机的航线重规划,并发布当前的飞行轨迹。 */

@@ -3,14 +3,20 @@
   <arg name="auto_start" default="true"/>
   <arg name="max_vel" default="1.0"/>
   <arg name="max_acc" default="1.0"/>
+  <arg name="config_file" default="$(find ego_planner)/launch/inspection.yaml"/>
+  <arg name="panel_status_file" default=""/>
   <include file="$(find ego_planner)/launch/run_in_sim.launch">
     <arg name="inspection_mode" value="true"/>
     <arg name="max_vel" value="$(arg max_vel)"/>
     <arg name="max_acc" value="$(arg max_acc)"/>
   </include>
   <node pkg="ego_planner" type="inspection_mission.py" name="inspection_mission" output="screen">
-    <rosparam command="load" file="$(find ego_planner)/launch/inspection.yaml"/>
+    <rosparam command="load" file="$(arg config_file)"/>
     <param name="auto_start" value="$(arg auto_start)"/>
+  </node>
+  <node if="$(eval arg('panel_status_file') != '')" pkg="ego_planner"
+        type="inspection_panel_status.py" name="inspection_panel_status" output="screen">
+    <param name="status_file" value="$(arg panel_status_file)"/>
   </node>
   <include if="$(arg rviz)" file="$(find ego_planner)/launch/rviz.launch"/>
 </launch>

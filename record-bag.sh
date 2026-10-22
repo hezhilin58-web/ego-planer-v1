@@ -47,6 +47,7 @@ topics=(
   /planning/pos_cmd
   /waypoint_generator/waypoints
   /inspection/yaw
+  /inspection/planning_metrics
   /inspection/status
   /inspection/events
   /inspection/markers

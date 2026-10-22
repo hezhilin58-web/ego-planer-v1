@@ -45,6 +45,9 @@
     <!-- 1: use 2D Nav Goal to select goal  -->
     <!-- 2: use global waypoints below  -->
     <arg name="flight_type" value="1" />
+    <arg name="use_waypoint_height" value="$(arg inspection_mode)"/>
+    <arg name="min_goal_distance" value="$(eval 0.01 if arg('inspection_mode') else 0.2)"/>
+    <arg name="close_goal_speed" value="$(eval 0.1 if arg('inspection_mode') else 0.0)"/>
     
     <!-- global waypoints -->
     <!-- It generates a piecewise min-snap traj passing all waypoints -->

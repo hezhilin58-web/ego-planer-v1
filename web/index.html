@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EGO · 巡检任务控制台</title>
+  <link rel="stylesheet" href="/app.css"><script src="/app.js" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="/" aria-label="EGO 巡检控制台"><span class="brand-icon">✣</span><span>EGO<span class="brand-sub">MISSION CONTROL</span></span></a>
+    <div class="nav-label">工作空间</div><div class="nav-current"><span>▦</span> 巡检任务</div>
+    <div class="sidebar-bottom"><span class="online-dot"></span> 本地仿真环境<br><small>EGO-Planner · ROS 1</small><p>逐点抵达<br>转向稳定<br>悬停巡检<br>自动返航回收</p><span class="version">V3 / INSPECTION</span></div>
+  </aside>
+  <main>
+    <header><div><div class="eyebrow">MISSION WORKSPACE</div><h1>巡检任务控制台</h1><p class="subtitle">配置航点与飞行参数，让每一站按计划完成。</p></div><span class="mode-badge"><span class="online-dot"></span> RViz 软件仿真</span></header>
+    <section class="workflow" aria-label="操作流程"><span><b>01</b> 配置任务</span><i>→</i><span><b>02</b> 应用并启动仿真</span><i>→</i><span><b>03</b> 开始巡检</span><small>参数在下次启动仿真时生效</small></section>
+    <div class="workspace">
+      <section class="card settings"><div class="card-heading"><div><span class="eyebrow">FLIGHT SETTINGS</span><h2>飞行参数</h2></div><span class="tag">统一配置</span></div>
+        <form id="settings-form">
+          <label class="field" for="max_vel"><span>最大飞行速度 <small>m/s</small></span><input id="max_vel" name="max_vel" type="number" min="0.2" max="2" step="0.1" required><em>规划速度上限，实际速度会随避障调整</em></label>
+          <label class="field" for="height"><span>巡检高度 <small>m</small></span><input id="height" name="height" type="number" min="0.5" max="2.5" step="0.1" required><em>应用于所有巡检点，相对世界坐标原点</em></label>
+          <label class="field" for="point-count"><span>巡检点数量 <small>个</small></span><input id="point-count" name="point-count" type="number" min="1" max="50" step="1" required></label>
+          <label class="field" for="hover_time"><span>转向后悬停时间 <small>s / 站</small></span><input id="hover_time" name="hover_time" type="number" min="0.5" max="60" step="0.1" required><em>朝向和位置稳定后开始计时，预留拍照窗口</em></label>
+          <details class="advanced"><summary>更多飞行参数</summary><label class="field" for="max_acc"><span>最大加速度 <small>m/s²</small></span><input id="max_acc" name="max_acc" type="number" min="0.2" max="2" step="0.1" required></label></details>
+        </form>
+        <div class="settings-note"><span>↳</span><p>到站转向稳定后悬停；全部巡检完成后自动返回任务起点，并逐步下降至 0.21 米保持。</p></div>
+        <button id="save" class="button secondary full">保存配置</button><div id="save-state" class="save-state">正在加载配置…</div>
+      </section>
+      <div class="mission-column">
+        <section class="card preview-card"><div class="card-heading"><div><span class="eyebrow">ROUTE OVERVIEW</span><h2>巡检路线预览</h2></div><div class="legend"><span class="legend-line"></span> 计划路线 <span class="legend-dot"></span> 无人机</div></div>
+          <div class="map-wrap"><svg id="route-map" viewBox="0 0 760 360" role="img" aria-label="巡检点俯视路线图"></svg><span class="map-caption">俯视图 · X / Y 世界坐标（米）<br>障碍物及实际轨迹请查看 RViz</span><div id="route-meta" class="map-meta"></div></div>
+          <div class="route-footer"><span>起点 <b id="home-label">(−18, 0)</b></span><span>航点高度 <b id="height-label">—</b></span><span>计划折线长度 <b id="distance-label">—</b></span><small>含返航，避障路径可能更长</small></div>
+        </section>
+        <section class="card waypoints-card"><div class="card-heading"><div><span class="eyebrow">INSPECTION STATIONS</span><h2>巡检点与目标航向 <span id="station-total" class="count-badge">0</span></h2></div><button id="add-point" class="button subtle">＋ 新增巡检点</button></div>
+          <p class="table-hint">按表格顺序执行。航向为绝对角度：0° 朝 +X，90° 朝 +Y；不是相对转动量。</p>
+          <div class="table-scroll"><table><thead><tr><th>站点</th><th>X 坐标 / m</th><th>Y 坐标 / m</th><th>目标航向 / °</th><th>顺序 / 删除</th></tr></thead><tbody id="stations"></tbody></table></div>
+        </section>
+      </div>
+    </div>
+    <section class="card execution"><div class="execution-top"><div><span class="eyebrow">LIVE MISSION</span><h2>执行状态 <span id="mission-state" class="state-badge">未启动仿真</span></h2></div><div class="actions"><button id="launch" class="button primary">应用配置并启动仿真</button><button id="start" class="button primary start" disabled>▷ 开始巡检</button><button id="stop" class="button danger" disabled>关闭仿真</button></div></div>
+      <div class="telemetry"><div><span>任务进度</span><strong id="progress">—</strong></div><div><span>实际位置 X / Y / Z</span><strong id="position">—</strong></div><div><span>实际速度</span><strong id="speed">—</strong></div><div><span>实际机头航向</span><strong id="yaw">—</strong></div></div>
+      <p id="live-note" class="live-note">先启动仿真，地图与定位就绪后再开始巡检。RViz 将同时打开。</p>
+      <details id="logs"><summary>查看仿真运行日志</summary><pre id="log-content">仿真尚未启动。</pre></details>
+    </section>
+    <section class="card execution planning-card"><div class="card-heading"><div><span class="eyebrow">PLANNING PERFORMANCE</span><h2>规划响应时间</h2></div><a class="button subtle" href="/api/planning.csv" download="planning-metrics.csv">导出 CSV</a></div>
+      <div class="telemetry"><div><span>最近一次计算</span><strong id="plan-latest">—</strong></div><div><span>平均计算耗时</span><strong id="plan-average">—</strong></div><div><span>最大计算耗时</span><strong id="plan-maximum">—</strong></div><div><span>最近目标首次响应</span><strong id="plan-response">—</strong></div></div>
+      <p id="plan-count" class="table-hint">尚无规划记录</p>
+      <p class="table-hint">计算耗时包含成功与失败尝试。首次响应：规划节点接收目标至首次发布成功轨迹，含调度等待与重试。单位毫秒，使用单调时钟实测；与网页刷新间隔无关。</p>
+      <div class="table-scroll planning-scroll"><table><thead><tr><th>序号 / 目标</th><th>时间</th><th>规划类型</th><th>结果</th><th>计算 / ms</th><th>首次响应 / ms</th></tr></thead><tbody id="planning-records"></tbody></table></div>
+    </section>
+    <footer>配置保存在本机 · 摄像机尚未接入 · 关闭网页不会停止正在运行的仿真</footer>
+  </main>
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+</body></html>

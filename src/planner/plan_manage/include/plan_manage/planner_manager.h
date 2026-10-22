@@ -43,6 +43,8 @@ namespace ego_planner
     GridMap::Ptr grid_map_;       // 类 栅格图指针，可以不管
 
   private:
+    double min_goal_distance_ = 0.2;
+    double close_goal_speed_ = 0.0;
     /* main planning algorithms & modules */
     PlanningVisualization::Ptr visualization_;
 

@@ -3,6 +3,7 @@
 
 #include <Eigen/Eigen>
 #include <algorithm>
+#include <chrono>
 #include <iostream>
 #include <nav_msgs/Path.h>
 #include <sensor_msgs/Imu.h>
@@ -55,6 +56,7 @@ namespace ego_planner
     ego_planner::DataDisp data_disp_;
 
     /* parameters */
+    bool use_waypoint_height_ = false;
     int target_type_; // 1 mannual select, 2 hard code 标识当前目标的类型,它对应了前面定义的 enum TARGET_TYPE 中的值
     double no_replan_thresh_, replan_thresh_;
     double waypoints_[50][3];
@@ -90,6 +92,12 @@ namespace ego_planner
         data_disp_pub_可能用于发布一些调试信息,供可视化界面或日志记录使用。 
      */
     ros::Publisher replan_pub_, new_pub_, bspline_pub_, data_disp_pub_;
+    ros::Publisher planning_metrics_pub_;
+    unsigned long long planning_seq_ = 0, goal_seq_ = 0;
+    bool waiting_first_trajectory_ = false;
+    std::chrono::steady_clock::time_point goal_received_at_;
+    void publishPlanningMetric(const std::string &stage, bool success, double duration_ms,
+                               double goal_response_ms = -1.0, int trajectory_id = -1);
 
     /* helper functions */
     bool callReboundReplan(bool flag_use_poly_init, bool flag_randomPolyTraj); // front-end and back-end method

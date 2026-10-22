@@ -35,6 +35,9 @@
   <arg name="point4_z"/>
 
   <arg name="flight_type"/>
+  <arg name="use_waypoint_height" default="false"/>
+  <arg name="min_goal_distance" default="0.2"/>
+  <arg name="close_goal_speed" default="0.0"/>
 
   <!-- main node -->
   <node pkg="ego_planner" name="ego_planner_node" type="ego_planner_node" output="screen">
@@ -45,6 +48,7 @@
     <remap from = "/grid_map/depth" to = "$(arg depth_topic)"/>
 
     <!-- planning fsm -->
+    <param name="fsm/use_waypoint_height" value="$(arg use_waypoint_height)" type="bool"/>
     <param name="fsm/flight_type" value="$(arg flight_type)" type="int"/>
     <param name="fsm/thresh_replan" value="1.5" type="double"/>
     <param name="fsm/thresh_no_replan" value="2.0" type="double"/>
@@ -121,6 +125,8 @@
 
   <!-- planner manager -->
     <param name="manager/max_vel" value="$(arg max_vel)" type="double"/>
+    <param name="manager/min_goal_distance" value="$(arg min_goal_distance)" type="double"/>
+    <param name="manager/close_goal_speed" value="$(arg close_goal_speed)" type="double"/>
     <param name="manager/max_acc" value="$(arg max_acc)" type="double"/>
     <param name="manager/max_jerk" value="4" type="double"/>
     <param name="manager/control_points_distance" value="0.4" type="double"/>
