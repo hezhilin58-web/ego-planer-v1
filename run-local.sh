@@ -24,11 +24,12 @@ if [ ! -f devel/setup.bash ]; then
 fi
 source devel/setup.bash --extend
 case "$mode" in
+  panel) exec python3 "$PROJECT_DIR/web/inspection_panel.py" "$@" ;;
   replay) exec "$PROJECT_DIR/replay-bag.sh" "$@" ;;
   record) exec "$PROJECT_DIR/record-bag.sh" "$@" ;;
   inspection) exec roslaunch ego_planner inspection.launch "$@" ;;
   demo) exec roslaunch "$PROJECT_DIR/local-demo.launch" "$@" ;;
   sim) exec roslaunch ego_planner run_in_sim.launch "$@" ;;
   rviz) exec roslaunch ego_planner rviz.launch "$@" ;;
-  *) echo '用法: ./run-local.sh [build|demo|sim|rviz|inspection|record|replay]' >&2; exit 2 ;;
+  *) echo '用法: ./run-local.sh [build|demo|sim|rviz|inspection|panel|record|replay]' >&2; exit 2 ;;
 esac

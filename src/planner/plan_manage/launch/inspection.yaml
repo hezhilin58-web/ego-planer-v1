@@ -11,9 +11,17 @@ position_tolerance: 0.2
 speed_tolerance: 0.1
 yaw_tolerance_deg: 5.0
 yaw_rate_tolerance_deg: 5.0
+# After arrival, start turning immediately. Require continuous position/heading stability
+# for stable_time, then hold for hover_time (reserved for future camera capture).
 stable_time: 1.0
 hover_time: 3.0
-station_hold_time: 1.0
 leg_timeout: 120.0
 station_timeout: 45.0
 odom_timeout: 0.5
+# V3: return to the recorded mission start XY, then lower altitude through planned goals.
+recovery_height: 0.21
+descent_step: 0.05
+descent_speed: 0.1
+descent_height_tolerance: 0.02
+descent_timeout: 180.0
+descent_step_timeout: 15.0

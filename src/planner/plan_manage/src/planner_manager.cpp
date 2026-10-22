@@ -1,6 +1,7 @@
 // #include <fstream>
 #include <plan_manage/planner_manager.h>
 #include <thread>
+#include <cmath>
 
 namespace ego_planner
 {
@@ -15,6 +16,12 @@ namespace ego_planner
   void EGOPlannerManager::initPlanModules(ros::NodeHandle &nh, PlanningVisualization::Ptr vis)
   {
     /* read algorithm parameters */
+    nh.param("manager/min_goal_distance", min_goal_distance_, 0.2);
+    if (!std::isfinite(min_goal_distance_) || min_goal_distance_ <= 0.0)
+      min_goal_distance_ = 0.2;
+    nh.param("manager/close_goal_speed", close_goal_speed_, 0.0);
+    if (!std::isfinite(close_goal_speed_) || close_goal_speed_ < 0.0)
+      close_goal_speed_ = 0.0;
     nh.param("manager/max_vel", pp_.max_vel_, -1.0);
     nh.param("manager/max_acc", pp_.max_acc_, -1.0);
     nh.param("manager/max_jerk", pp_.max_jerk_, -1.0);
@@ -56,9 +63,9 @@ namespace ego_planner
          << "\ngoal:" << local_target_pt.transpose() << ", " << local_target_vel.transpose()
          << endl;
 
-    // 如果起始点与目标点之间的距离小于0.2，表示已经接近目标点，输出提示信息并返回false。
+    // Default 0.2 m; inspection recovery uses a tighter configurable goal-input threshold.
     // 此外，还会增加一个计数器continous_failures_count_，用于记录连续失败的次数。
-    if ((start_pt - local_target_pt).norm() < 0.2)
+    if ((start_pt - local_target_pt).norm() < min_goal_distance_)
     {
       cout << "Close to goal" << endl;
       /* continous_failures_count_ 直接影响后续生成初始 gl_traj多项式轨迹 随机中间点的偏移量。
@@ -77,7 +84,7 @@ namespace ego_planner
     // 在此步骤中，首先计算起始点和目标点之间的距离((start_pt - local_target_pt).norm())。
     // 如果距离大于 0.1，说明路径点之间的距离较大，代码选择使用 乘以 1.2 是为了稍微增加时间间隔，以减缓速度和加速度的变化，以免超过系统的限制。
     // 如果距离小于等于 0.1，说明路径点之间的距离较小，这时代码选择乘以 5 是为了增加时间间隔，以确保路径段的持续时间不会过短，以满足系统对最小持续时间的要求。
-    // 此处不存在(start_pt - local_target_pt).norm() <= 0.1的情况，因为 0.1 < 0.2，这种情况必然在之前的 if中 就 return false 了。
+    // V3 inspection can accept sub-0.1 m goals; retain the existing longer sampling interval below.
     double ts = (start_pt - local_target_pt).norm() > 0.1 ? pp_.ctrl_pt_dist / pp_.max_vel_ * 1.2 : pp_.ctrl_pt_dist / pp_.max_vel_ * 5; 
     // double ts = pp_.ctrl_pt_dist / pp_.max_vel_ * 1.2; 
     // pp_.ctrl_pt_dist / pp_.max_vel_ is too tense, and will surely exceed the acc/vel limits
@@ -128,6 +135,10 @@ namespace ego_planner
         // 当 dist >= s 时，机器人需要先加速至最大速度，保持最大速度运行一段时间，再减速，
         // 因此加减速时间为 2 * pp_.max_vel_ / pp_.max_acc_；匀速时间为 dist - pow(pp_.max_vel_, 2) / pp_.max_acc_
         double time = pow(pp_.max_vel_, 2) / pp_.max_acc_ > dist ? sqrt(dist / pp_.max_acc_) : (dist - pow(pp_.max_vel_, 2) / pp_.max_acc_) / pp_.max_vel_ + 2 * pp_.max_vel_ / pp_.max_acc_;
+        // Give short inspection recovery goals a deliberately slow, smooth seed trajectory.
+        // The default zero leaves the original timing unchanged in manual flight mode.
+        if (close_goal_speed_ > 0.0 && dist < 0.15)
+          time = std::max(time, std::max(1.0, 2.5 * dist / close_goal_speed_));
         /* 得到初始（随机）多项式轨迹 gl_traj */
         if (!flag_randomPolyTraj) // 尝试直接采用单段五次多项式生成轨迹，若成功，则可以节省轨迹规划时间
         {

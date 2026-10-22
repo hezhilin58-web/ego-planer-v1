@@ -35,19 +35,30 @@ class InspectionMission:
             if len(station['position']) != 3 or not all(
                     math.isfinite(float(v)) for v in station['position'] + [station['yaw_deg']]):
                 raise ValueError('Station position and yaw must be finite')
-            # The existing manual-goal input uses a fixed 1 metre altitude.
-            if abs(station['position'][2] - 1.0) > 1e-6:
-                raise ValueError('This simulation goal interface currently requires z=1 metre')
+            if station['position'][2] <= 0:
+                raise ValueError('Inspection station height must be positive')
         self.pos_tol = self.positive('position_tolerance', 0.2)
         self.vel_tol = self.positive('speed_tolerance', 0.1)
         self.yaw_tol = math.radians(self.positive('yaw_tolerance_deg', 5.0))
         self.rate_tol = math.radians(self.positive('yaw_rate_tolerance_deg', 5.0))
         self.stable_time = self.positive('stable_time', 1.0)
         self.hover_time = self.positive('hover_time', 3.0)
-        self.hold_time = self.positive('station_hold_time', 1.0)
         self.leg_timeout = self.positive('leg_timeout', 120.0)
         self.station_timeout = self.positive('station_timeout', 45.0)
         self.odom_timeout = self.positive('odom_timeout', 0.5)
+        self.recovery_height = self.positive('recovery_height', 0.21)
+        self.descent_step = self.positive('descent_step', 0.05)
+        self.descent_speed = self.positive('descent_speed', 0.1)
+        self.descent_tolerance = self.positive('descent_height_tolerance', 0.02)
+        self.descent_timeout = self.positive('descent_timeout', 180.0)
+        self.descent_step_timeout = self.positive('descent_step_timeout', 15.0)
+        if self.descent_step > 0.05 or self.descent_tolerance >= self.descent_step:
+            raise ValueError('Descent step must be <=0.05 m and exceed descent height tolerance')
+        if any(s['position'][2] < self.recovery_height for s in self.stations):
+            raise ValueError('Inspection heights must be at or above recovery height')
+        self.home = None
+        self.target = list(self.stations[0]['position'])
+        self.descent_start = self.next_descent_time = 0.0
         self.state = 'WAIT_READY'
         self.index = 0
         self.completed = 0
@@ -121,6 +132,8 @@ class InspectionMission:
             self.index = self.completed = 0
             self.reason = ''
             self.ready_since = None
+            self.home = None
+            self.target = list(self.stations[0]['position'])
             self.start_requested = True
             self.change('WAIT_READY')
             return TriggerResponse(True, 'Waiting for fresh odometry and map')
@@ -128,7 +141,8 @@ class InspectionMission:
     def snapshot(self):
         station = self.stations[min(self.index, len(self.stations) - 1)]
         return dict(state=self.state, station=self.index + 1, total=len(self.stations),
-                    completed=self.completed, target=station['position'],
+                    completed=self.completed, target=self.target, home=self.home,
+                    recovery_height=self.recovery_height,
                     target_yaw_deg=station['yaw_deg'], position=self.position,
                     speed=self.speed, yaw_deg=math.degrees(self.yaw),
                     yaw_rate_deg=math.degrees(self.yaw_rate), reason=self.reason)
@@ -148,29 +162,53 @@ class InspectionMission:
         self.stable_since = None
         self.event('state_changed')
 
-    def send_goal(self):
-        self.yaw_pub.publish(Float64(data=float('nan')))  # Return yaw ownership to flight tracking.
+    def send_goal(self, target=None, state='TRAVEL', event='goal_sent'):
+        self.target = list(target if target is not None else self.stations[self.index]['position'])
+        if state != 'DESCEND':
+            self.yaw_pub.publish(Float64(data=float('nan')))  # Return yaw ownership to flight tracking.
         goal = Path()
         goal.header.stamp = rospy.Time.now()
         goal.header.frame_id = 'world'
         pose = PoseStamped()
         pose.header = goal.header
-        pose.pose.position = Point(*self.stations[self.index]['position'])
+        pose.pose.position = Point(*self.target)
         pose.pose.orientation.w = 1.0
         goal.poses = [pose]
         self.goal_pub.publish(goal)
         self.leg_start = time.monotonic()
-        self.change('TRAVEL')
-        self.event('goal_sent')
+        self.change(state)
+        self.event(event)
 
-    def at_rest(self, now):
-        target = self.stations[self.index]['position']
+    def begin_return(self):
+        if self.home is None:
+            self.fail('Mission start position is unavailable; return cancelled')
+            return
+        self.event('inspection_completed')
+        altitude = max(self.position[2], self.target[2], self.home[2], self.recovery_height)
+        self.send_goal([self.home[0], self.home[1], altitude], 'RETURN_HOME', 'return_goal_sent')
+
+    def send_descent_goal(self, now):
+        altitude = max(self.recovery_height, round(self.target[2] - self.descent_step, 6))
+        # Merge the last short remainder, so the final goal is not inside the planner deadband.
+        if altitude - self.recovery_height < self.descent_step:
+            altitude = self.recovery_height
+        step_distance = self.target[2] - altitude
+        self.send_goal([self.home[0], self.home[1], altitude], 'DESCEND', 'descent_goal_sent')
+        self.next_descent_time = now + step_distance / self.descent_speed
+
+    def at_rest(self, now, descending=False):
+        target = self.target
         if self.cmd is None or now - self.cmd_time > self.odom_timeout:
             return False
         p, v = self.cmd.position, self.cmd.velocity
         # Also require the execution server to be holding this station, not an intermediate stop.
-        return (norm([a - b for a, b in zip(self.position, target)]) <= self.pos_tol
-                and self.speed <= self.vel_tol
+        position_ok = (norm([a - b for a, b in zip(self.position, target)]) <= self.pos_tol)
+        if descending:
+            position_ok = (norm([self.position[i] - target[i] for i in (0, 1)]) <= self.pos_tol
+                           and abs(self.position[2] - target[2]) <= self.descent_tolerance
+                           and abs(p.z - target[2]) <= self.descent_tolerance)
+        return (position_ok
+                and self.speed <= (min(self.vel_tol, 0.05) if descending else self.vel_tol)
                 and norm([p.x - target[0], p.y - target[1], p.z - target[2]]) <= self.pos_tol
                 and norm([v.x, v.y, v.z]) < 0.05)
 
@@ -202,16 +240,44 @@ class InspectionMission:
             elif self.ready_since is None:
                 self.ready_since = now
             elif self.start_requested and now - self.ready_since > 3.0:
+                self.home = list(self.position)
+                self.event('home_recorded')
                 self.send_goal()
         elif self.state not in ('COMPLETE', 'FAILED'):
             if now - self.odom_time > self.odom_timeout:
                 self.fail('Odometry unavailable or stale')
+            elif self.state == 'RETURN_HOME':
+                if now - self.leg_start > self.leg_timeout:
+                    self.fail('Return-home timeout; descent not started')
+                elif self.continuous(self.at_rest(now), self.stable_time, now):
+                    self.event('home_reached')
+                    self.descent_start = now
+                    self.yaw_pub.publish(Float64(data=self.yaw))
+                    self.send_descent_goal(now)
+            elif self.state == 'DESCEND':
+                if now - self.descent_start > self.descent_timeout:
+                    self.fail('Descent timeout; no lower target will be dispatched')
+                elif now - self.leg_start > self.descent_step_timeout:
+                    self.fail('Descent step unreachable; no lower target will be dispatched')
+                else:
+                    final = self.target[2] <= self.recovery_height + 1e-6
+                    settling = self.stable_time if final else 0.25
+                    if self.continuous(self.at_rest(now, descending=True), settling, now):
+                        if final:
+                            self.event('recovery_height_reached')
+                            self.change('COMPLETE')
+                            self.event('mission_completed')
+                        elif now >= self.next_descent_time:
+                            self.event('descent_step_reached')
+                            self.send_descent_goal(now)
             elif self.state == 'TRAVEL':
                 if now - self.leg_start > self.leg_timeout:
                     self.fail('Arrival timeout: target may be unreachable')
-                elif self.continuous(self.at_rest(now), self.stable_time, now):
+                elif self.at_rest(now):
+                    # Start heading control on the first measured arrival; no pre-turn dwell.
                     self.station_start = now
-                    self.change('HOVER')
+                    self.yaw_pub.publish(Float64(data=math.radians(self.stations[self.index]['yaw_deg'])))
+                    self.change('ALIGN')
                     self.event('arrival_confirmed')
             else:
                 if now - self.station_start > self.station_timeout:
@@ -221,28 +287,23 @@ class InspectionMission:
                     if self.state != 'RECOVER':
                         self.change('RECOVER')
                 elif self.state == 'RECOVER':
-                    if self.continuous(True, self.stable_time, now):
-                        self.change('HOVER')
-                elif self.state == 'HOVER':
-                    if self.continuous(True, self.hover_time, now):
-                        self.yaw_pub.publish(Float64(data=math.radians(self.stations[self.index]['yaw_deg'])))
-                        self.change('ALIGN')
-                elif self.state in ('ALIGN', 'STATION_HOLD'):
+                    # The heading request remains active. Reconfirm stability before any dwell.
+                    self.change('ALIGN')
+                elif self.state in ('ALIGN', 'HOVER'):
                     aligned = (abs(angle_error(math.radians(self.stations[self.index]['yaw_deg']),
                                                self.yaw)) <= self.yaw_tol
                                and abs(self.yaw_rate) <= self.rate_tol)
                     if self.state == 'ALIGN':
                         if self.continuous(aligned, self.stable_time, now):
-                            self.change('STATION_HOLD')
+                            self.change('HOVER')
                             self.event('heading_confirmed')
                     elif not aligned:
                         self.change('ALIGN')
-                    elif self.continuous(True, self.hold_time, now):
+                    elif self.continuous(True, self.hover_time, now):
                         self.completed += 1
                         self.event('station_completed')
                         if self.completed == len(self.stations):
-                            self.change('COMPLETE')
-                            self.event('mission_completed')
+                            self.begin_return()
                         else:
                             self.index += 1
                             self.send_goal()
@@ -261,7 +322,7 @@ class InspectionMission:
                 continue
             same_location = [j for j, item in enumerate(self.stations)
                              if item['position'] == station['position']]
-            current_here = self.index in same_location and self.state != 'COMPLETE'
+            current_here = self.index in same_location and self.state in ('TRAVEL', 'ALIGN', 'HOVER', 'RECOVER')
             marker = Marker()
             marker.header.frame_id = 'world'
             marker.header.stamp = rospy.Time.now()
@@ -299,6 +360,26 @@ class InspectionMission:
             arrow.scale.x, arrow.scale.y, arrow.scale.z = 0.08, 0.18, 0.25
             arrow.color.r, arrow.color.g, arrow.color.b, arrow.color.a = 0.5, 0.1, 0.8, 1.0
             markers.append(arrow)
+        for marker_id in (0, 1):
+            home_marker = Marker()
+            home_marker.header.frame_id = 'world'
+            home_marker.header.stamp = rospy.Time.now()
+            home_marker.ns, home_marker.id = 'inspection_home', marker_id
+            home_marker.action = Marker.ADD if self.home is not None else Marker.DELETE
+            home_marker.pose.orientation.w = 1.0
+            home_marker.color.r, home_marker.color.g, home_marker.color.b, home_marker.color.a = 0.1, 0.65, 0.45, 1.0
+            if self.home is not None:
+                home_marker.pose.position = Point(self.home[0], self.home[1], self.recovery_height)
+                if marker_id == 0:
+                    home_marker.type = Marker.CYLINDER
+                    home_marker.scale.x = home_marker.scale.y = 0.8
+                    home_marker.scale.z = 0.04
+                else:
+                    home_marker.type = Marker.TEXT_VIEW_FACING
+                    home_marker.pose.position.z += 0.7
+                    home_marker.scale.z = 0.35
+                    home_marker.text = 'HOME / recovery %.2f m' % self.recovery_height
+            markers.append(home_marker)
         status = Marker()
         status.header.frame_id = 'world'
         status.ns, status.id = 'inspection_status', 0
